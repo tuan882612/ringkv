@@ -62,6 +62,7 @@ func (ft *fingerTableImpl) update(node *Node) {
 
 		ft.table[i] = succ
 	}
+	log.Info().Str("node_id", node.ID.String()).Msgf("%s: Finger table updated", node.Address)
 }
 
 // ininterval checks if id is in the interval (start, end]

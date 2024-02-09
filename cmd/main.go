@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -25,17 +26,35 @@ func main() {
 	flag.Parse()
 
 	if newAddr == "" {
-		log.Fatal().Msg("Address of new node is required.")
-	}
-
-	node := chord.NewNode(newAddr)
-
-	if joinAddr == "" {
-		log.Info().Msg("No join address provided. Starting as a bootstrap node...")
-		node.Bootstrap()
+		log.Info().Msg("No address provided. Running set of nodes...")
+		n1 := chord.NewNode("localhost:3000")
+		time.Sleep(1 * time.Second)
+		n2 := chord.NewNode("localhost:3001")
+		time.Sleep(1 * time.Second)
+		n3 := chord.NewNode("localhost:3002")
+		time.Sleep(1 * time.Second)
+		n4 := chord.NewNode("localhost:3003")
+		time.Sleep(1 * time.Second)
+		n5 := chord.NewNode("localhost:3004")
+		n1.Bootstrap()
+		time.Sleep(1 * time.Second)
+		n2.JoinRing("localhost:3000")
+		time.Sleep(1 * time.Second)
+		n3.JoinRing("localhost:3001")
+		time.Sleep(1 * time.Second)
+		n4.JoinRing("localhost:3000")
+		time.Sleep(1 * time.Second)
+		n5.JoinRing("localhost:3000")
 	} else {
-		log.Info().Msgf("Joining existing node at %s", joinAddr)
-		node.JoinRing(joinAddr)
+		node := chord.NewNode(newAddr)
+
+		if joinAddr == "" {
+			log.Info().Msg("No join address provided. Starting as a bootstrap node...")
+			node.Bootstrap()
+		} else {
+			log.Info().Msgf("Joining existing node at %s", joinAddr)
+			node.JoinRing(joinAddr)
+		}
 	}
 
 	sigint := make(chan os.Signal, 1)
