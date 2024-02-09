@@ -3,6 +3,7 @@ package chord
 import (
 	"crypto/sha1"
 	"math/big"
+	"time"
 
 	jsoniter "github.com/json-iterator/go"
 	"github.com/rs/zerolog/log"
@@ -36,7 +37,7 @@ func makeNodeID(address string) *big.Int {
 }
 
 // NewNode creates a new node with the given address.
-// The node is pre-initialized with an empty store, transport and finger table. 
+// The node is pre-initialized with an empty store, transport and finger table.
 func NewNode(address string) *Node {
 	node := &Node{
 		ID:        makeNodeID(address),
@@ -93,4 +94,94 @@ func (n *Node) closestPrecedingNode(id NID) *NodeInfo {
 	}
 
 	return n.Successor
+}
+
+// findPredecessor is used to find the predecessor of a node with a given id in the ring
+func (n *Node) findPredecessor(id NID) (*NodeInfo, error) {
+	for !(id.Cmp(n.ID) > 0 && id.Cmp(n.Successor.ID) <= 0) {
+		if n.ID.Cmp(n.Successor.ID) >= 0 {
+			break
+		}
+
+		node := n.closestPrecedingNode(id)
+		if node.ID.Cmp(n.ID) == 0 {
+			break
+		}
+
+		req := NewRPCRequest(FindPredecessorMethod, id.Bytes())
+		data, err := n.Transport.invokeRPC(node.Address, req)
+		if err != nil {
+			return nil, err
+		}
+
+		pred := &NodeInfo{}
+		if err := jsoniter.Unmarshal(data, pred); err != nil {
+			log.Error().
+				Err(err).Str("node_id", n.ID.String()).
+				Msgf("%s: Failed to decode predecessor", n.Address)
+			return nil, err
+		}
+
+		n.Predecessor = pred
+	}
+
+	log.Info().
+		Str("node_id", n.ID.String()).Str("predecessor_id", n.Predecessor.ID.String()).
+		Msgf("%s: Found predecessor at %s", n.Address, n.Predecessor.Address)
+	return n.Predecessor, nil
+}
+
+// notify is called periodically to verify the node's immediate successor and update its predecessor
+func (n *Node) notify(node *NodeInfo) error {
+	if n.Predecessor == nil || n.Table.ininterval(node.ID, n.Predecessor.ID, n.ID) {
+		n.Predecessor = node
+	}
+
+	return nil
+}
+
+// stabilize is called periodically to verify the node's immediate successor and tell the successor about the node
+func (n *Node) stabilize() {
+	log.Info().Str("node_id", n.ID.String()).Msgf("%s: Starting stabilize", n.Address)
+	ticker := time.NewTicker(time.Second * 10) // Run every 10 seconds
+	go func() {
+		for range ticker.C {
+			req := NewRPCRequest(FindPredecessorMethod, n.Successor.ID.Bytes())
+			res, err := n.Transport.invokeRPC(n.Successor.Address, req)
+			if err != nil {
+				log.Error().
+					Err(err).Str("node_id", n.ID.String()).
+					Msgf("%s: Failed to find predecessor", n.Address)
+				continue
+			}
+
+			pred := &NodeInfo{}
+			if err := jsoniter.Unmarshal(res, pred); err != nil {
+				log.Error().
+					Err(err).Str("node_id", n.ID.String()).
+					Msgf("%s: Failed to decode predecessor", n.Address)
+				continue
+			}
+
+			start := new(big.Int).Add(n.ID, big.NewInt(1))
+			if n.Table.ininterval(pred.ID, start, n.Successor.ID) {
+				n.Successor = pred
+			}
+
+			data, err := jsoniter.Marshal(n.getInfo())
+			if err != nil {
+				log.Error().
+					Err(err).Str("node_id", n.ID.String()).
+					Msgf("%s: Failed to encode node info", n.Address)
+				continue
+			}
+
+			req = NewRPCRequest(NotifyMethod, data)
+			if _, err := n.Transport.invokeRPC(n.Successor.Address, req); err != nil {
+				log.Error().
+					Err(err).Str("node_id", n.ID.String()).
+					Msgf("%s: Failed to notify successor", n.Address)
+			}
+		}
+	}()
 }

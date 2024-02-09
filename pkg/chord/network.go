@@ -9,7 +9,11 @@ import (
 )
 
 const (
-	FindSuccessorMethod RPCMethod = "FindSuccessor"
+	FindSuccessorMethod   RPCMethod = "FindSuccessor"
+	FindPredecessorMethod RPCMethod = "FindPredecessor"
+	NotifyMethod          RPCMethod = "Notify"
+	LeaveMethod           RPCMethod = "Leave"
+	StablizeMethod        RPCMethod = "Stablize"
 )
 
 // types used for remote procedure calls on the network
@@ -91,6 +95,7 @@ func (t *transportImpl) handleConnection(conn net.Conn, node *Node) {
 		log.Info().
 			Str("successor_pos", position.String()).
 			Msgf("%s: Handling FindSuccessor request", node.Address)
+
 		successor, err := node.findSuccessor(&position)
 		if err != nil {
 			log.Error().
@@ -105,6 +110,44 @@ func (t *transportImpl) handleConnection(conn net.Conn, node *Node) {
 				Err(err).Str("node_id", node.ID.String()).
 				Msgf("%s: Failed to encode successor", node.Address)
 		}
+	case FindPredecessorMethod:
+		var id big.Int
+		id.SetBytes(req.Data)
+		log.Info().
+			Str("predecessor_pos", id.String()).
+			Msgf("%s: Handling FindPredecessor request", node.Address)
+
+		predecessor, err := node.findPredecessor(&id)
+		if err != nil {
+			log.Error().
+				Err(err).Str("node_id", node.ID.String()).
+				Msgf("%s: Failed to find predecessor", node.Address)
+			return
+		}
+
+		res, err = jsoniter.Marshal(predecessor)
+		if err != nil {
+			log.Error().
+				Err(err).Str("node_id", node.ID.String()).
+				Msgf("%s: Failed to encode predecessor", node.Address)
+			return
+		}
+	case NotifyMethod:
+		pred := &NodeInfo{}
+		if err := jsoniter.Unmarshal(req.Data, pred); err != nil {
+			log.Error().
+				Err(err).Str("node_id", node.ID.String()).
+				Msgf("%s: Failed to decode predecessor", node.Address)
+			return
+		}
+
+		// write the response
+		res = []byte("OK")
+
+		log.Info().
+			Str("predecessor_id", pred.ID.String()).
+			Msgf("%s: Handling Notify request", node.Address)
+		node.notify(pred)
 	}
 
 	if _, err := conn.Write(res); err != nil {
